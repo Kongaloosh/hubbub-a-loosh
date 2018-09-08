@@ -19,12 +19,14 @@ def denial():
     response.status_code
     return
 
+
 def challenge_me(n):
-   return ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(n))
+    return ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(n))
 
 
 def subscribe():
-    pass
+    #     add the subscriber to the dbms
+    request
 
 
 def unsubscribe():
@@ -49,7 +51,6 @@ def verify(hub_callback, hub_mode, hub_topic, hub_lease_seconds=None):
         else:
             unsubscribe()
     return abort(404)
-
 
 
 @app.route('/', methods=['GET', 'POST'])
