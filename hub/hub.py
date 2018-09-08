@@ -45,6 +45,7 @@ def subscribe():
 def unsubscribe():
     return make_response(("Unubscription successful", 200))
 
+
 def verify(hub_callback, hub_mode, hub_topic, hub_lease_seconds=None, hub_secret=None):
     """Verifies a request and performs an action if the verification is successful (subscribe/unsubscribe)"""
     challenge = challenge_me(30)      # generates a challenge string
@@ -67,6 +68,31 @@ def verify(hub_callback, hub_mode, hub_topic, hub_lease_seconds=None, hub_secret
         else:
             return unsubscribe(hub_topic, hub_callback)
     return abort(404)
+
+
+def init_db():
+    with closing(connect_db()) as db:
+        with app.open_resource('hub.sql', mode='r') as f:
+            db.cursor().executescript(f.read())
+        db.commit()
+
+
+def connect_db():
+    if not os.path.isfile('hub.db'):
+        init_db()
+    return sqlite3.connect('hub.db')
+
+
+@app.before_request
+def before_request():
+    g.db = connect_db()
+
+
+@app.teardown_request
+def teardown_request(exception):
+    db = getattr(g, 'db', None)
+    if db is not None:
+        db.close()
 
 
 @app.route('/', methods=['GET', 'POST'])
@@ -132,7 +158,6 @@ def show_entries():
             pass
         elif hub_mode == 'replay':
             pass
-
 
 
 @app.route('/login')
