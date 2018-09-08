@@ -1,1 +1,5 @@
 *.pyc
+
+# pipenv files
+PipFile
+PipFile.lock
