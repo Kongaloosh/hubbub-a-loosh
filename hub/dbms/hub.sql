@@ -4,5 +4,6 @@ create table subscribers (
   topic text not null,
   callback text not null,
   lease integer,
-  secret text
+  secret text,
+  CONSTRAINT sub_unique UNIQUE(topic,callback)
 );

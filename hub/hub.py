@@ -36,11 +36,7 @@ def challenge_me(n):
 
 
 def subscribe(hub_topic, hub_callback, hub_lease_seconds, hub_secret):
-    # WHERE
-    # callback = {0};
     #   if the topic is not yet in the dbms
-    print hub_callback
-
     cur = g.db.execute(
         """
         SELECT *
@@ -48,7 +44,9 @@ def subscribe(hub_topic, hub_callback, hub_lease_seconds, hub_secret):
         WHERE callback = '{0}'
         """.format(hub_callback)
     )
-    print len(cur.fetchall())
+    if len(cur.fetchall()) > 1:
+        pass
+
 
     #     add the subscriber to the dbms
 
@@ -193,7 +191,7 @@ def dashboard():
 
 
 if __name__ == "__main__":
-    if not os.path.isfile('dbms/hub.db'):
+    if not os.path.isfile('hub/dbms/hub.db'):
         print("Creating DBMS!")
         init_db()
     app.run(debug=True)
