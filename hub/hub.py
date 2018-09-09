@@ -10,6 +10,8 @@ import requests
 from requests import ConnectionError
 import string
 import sqlite3
+import threading
+import time
 from werkzeug.exceptions import BadRequestKeyError
 
 jinja_env = Environment(extensions=['jinja2.ext.with_'])
@@ -59,8 +61,6 @@ def subscribe(hub_topic, hub_callback, hub_lease_seconds=None, hub_secret=None):
     )
     g.db.commit()
 
-    return make_response(("Subscription successful", 202))
-
 
 def publish(topic):
     cur = g.db.execute(
@@ -101,7 +101,6 @@ def publish(topic):
                 requests.post(callback, data={'body': body}, headers=headers)
             except ConnectionError:
                 pass
-    return make_response(("Publishing being updated", 202))
 
 
 def unsubscribe(hub_topic, hub_callback):
@@ -112,7 +111,6 @@ def unsubscribe(hub_topic, hub_callback):
         """.format(hub_topic, hub_callback)
     )
     g.db.commit()
-    return make_response(("Unubscription successful", 202))
 
 
 def verify(hub_callback, hub_mode, hub_topic, hub_lease_seconds=None, hub_secret=None, headers=None):
@@ -135,10 +133,11 @@ def verify(hub_callback, hub_mode, hub_topic, hub_lease_seconds=None, hub_secret
 
     if result.json()['hub.challenge'] == challenge and int(result.status_code / 100) == 2:
         if hub_lease_seconds:
-            return subscribe(hub_topic, hub_callback, hub_lease_seconds, hub_secret)
+            return make_response(("", 202))
+            threading.Thread(target=subscribe, args=(hub_topic, hub_callback, hub_lease_seconds, hub_secret))
         else:
-            return unsubscribe(hub_topic, hub_callback)
-    return abort(404)
+            return make_response(("", 202))
+            threading.Thread(target=unsubscribe, args =(hub_topic, hub_callback))
 
 
 def init_db():
@@ -228,11 +227,28 @@ def show_entries():
         except:
             pass
         if hub_mode == 'subscribe':  # if this is a subscription, verify
-            return verify(hub_callback=str(hub_callback), hub_mode=str(hub_mode), hub_topic=str(hub_topic),
-                   hub_lease_seconds=str(hub_lease_seconds), hub_secret=hub_secret)
+            threading.Thread(
+                target=verify,
+                kwargs={
+                    'hub_callback':str(hub_callback),
+                    'hub_mode':str(hub_mode),
+                    'hub_topic':str(hub_topic),
+                    'hub_lease_second':str(hub_lease_seconds),
+                    'hub_secret':hub_secret
+                }
+            )
+            return make_response(("", 202))
+
         elif hub_mode == 'unsubscribe':  # if this is an unsubscription, verify
-            return verify(hub_callback=str(hub_callback), hub_mode=str(hub_mode), hub_topic=str(hub_topic),
-                          headers=str(request.headers), hub_secret=hub_secret)
+            threading.Thread(
+                target=verify,
+                kwargs={'hub_callback':str(hub_callback),
+                        'hub_mod':str(hub_mode),
+                        'hub_topic':str(hub_topic),
+                          'headers':str(request.headers),
+                        'hub_secret':hub_secret}
+            )
+            return make_response(("", 202))
         elif hub_mode == 'list':
             abort(404)
         elif hub_mode == 'retrieve':
