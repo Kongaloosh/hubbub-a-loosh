@@ -35,20 +35,25 @@ def challenge_me(n):
     return ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(n))
 
 
-def subscribe(hub_topic, hub_callback, hub_lease_seconds, hub_secret):
+def subscribe(hub_topic, hub_callback, hub_lease_seconds=None, hub_secret=None):
     #   if the topic is not yet in the dbms
+    insert = ["\""+hub_topic+"\"", "\""+hub_callback+"\""]
+    labels = "topic, callback"
+
+    if hub_lease_seconds:                       # if there exists a lease, add it to the list of things committed
+        insert.append(str(hub_lease_seconds))
+        labels += ", lease"
+
+    if hub_secret:                              # if there exists a secret, add it to the list of things committed
+        insert.append("\""+hub_secret+"\"")
+        labels += ', secret'
+
     cur = g.db.execute(
         """
-        SELECT *
-        FROM subscribers
-        WHERE callback = '{0}'
-        """.format(hub_callback)
+        INSERT INTO subscribers
+        ({0}) VALUES ({1});
+        """.format(labels, ",".join(insert))
     )
-    if len(cur.fetchall()) > 1:
-        pass
-
-
-    #     add the subscriber to the dbms
 
     return make_response(("Subscription successful", 200))
 
@@ -157,10 +162,10 @@ def show_entries():
 
         if hub_mode == 'subscribe':  # if this is a subscription, verify
             return verify(hub_callback=str(hub_callback), hub_mode=str(hub_mode), hub_topic=str(hub_topic),
-                   hub_lease_seconds=str(hub_lease_seconds), hub_secret=str(hub_secret))
+                   hub_lease_seconds=str(hub_lease_seconds), hub_secret=hub_secret)
         elif hub_mode == 'unsubscribe':  # if this is an unsubscription, verify
             return verify(hub_callback=str(hub_callback), hub_mode=str(hub_mode), hub_topic=str(hub_topic),
-                          headers=str(request.headers), hub_secret=str(hub_secret))
+                          headers=str(request.headers), hub_secret=hub_secret)
         elif hub_mode == 'list':
             pass
         elif hub_mode == 'retrieve':
