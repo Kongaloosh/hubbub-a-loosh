@@ -40,8 +40,10 @@ def ping():
         'hub.topic': 'http://127.0.0.1:5000/',
         'hub.callback': 'http://127.0.0.1:8000/'
     }
-    r = requests.post(payload['hub.topic'], params=payload, headers={})
+    # params return form encoded args, data returns data
+    r = requests.post(payload['hub.topic'], data=payload, headers={})
     app.logger.info(r)
+    return make_response(('The subscription response ended with {0}, {1}'.format(r.text, r.status_code)), 200)
 
 if __name__ == "__main__":
     app.run(debug=True, port=8000)

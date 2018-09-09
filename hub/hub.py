@@ -59,10 +59,16 @@ def subscribe(hub_topic, hub_callback, hub_lease_seconds=None, hub_secret=None):
 
 
 def unsubscribe(hub_topic, hub_callback):
+    cur = g.db.execute(
+        """
+        DELETE FROM subscribers
+        WHERE "topic = '{0}' AND callback = '{1}'";
+        """.format(hub_topic, hub_callback)
+    )
     return make_response(("Unubscription successful", 200))
 
 
-def verify(hub_callback, hub_mode, hub_topic, hub_lease_seconds=None, hub_secret=None):
+def verify(hub_callback, hub_mode, hub_topic, hub_lease_seconds=None, hub_secret=None, headers=None):
     """Verifies a request and performs an action if the verification is successful (subscribe/unsubscribe)"""
     challenge = challenge_me(30)      # generates a challenge string
     # the request we are sending to the callback tao verify the request
@@ -74,9 +80,8 @@ def verify(hub_callback, hub_mode, hub_topic, hub_lease_seconds=None, hub_secret
     if hub_lease_seconds:
         payload['hub.lease_seconds'] = hub_lease_seconds
 
-    headers = {}
-
-    result = requests.get(hub_callback, params=payload, headers=headers)
+    resp_headers = {}
+    result = requests.get(hub_callback, params=payload, headers=resp_headers)
 
     if result.json()['hub.challenge'] == challenge and int(result.status_code / 100) == 2:
         if hub_lease_seconds:
@@ -159,6 +164,8 @@ def show_entries():
                 hub_lease_seconds = 10 * 60 * 60 * 24
             else:  # otherwise no lease is required for the request
                 hub_lease_seconds = None
+
+        app.logger.info((hub_secret,hub_lease_seconds,hub_topic,hub_callback,hub_mode))
 
         if hub_mode == 'subscribe':  # if this is a subscription, verify
             return verify(hub_callback=str(hub_callback), hub_mode=str(hub_mode), hub_topic=str(hub_topic),
