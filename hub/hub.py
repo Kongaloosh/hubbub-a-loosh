@@ -29,125 +29,6 @@ app.logger.setLevel(logging.DEBUG)
 app.logger.debug('this will show in the log')
 
 
-def denial():
-    response = make_response(topic, reason)
-    response.args['hub.mode'] = 'denied'
-    response.headers['hub.topic'] = topic
-    response.status_code
-    return
-
-
-def challenge_me(n):
-    """Generates a random challenge string for verification of length n
-    Args:
-        n: integer length of the challenge string
-    Returns:
-        challenge string of length n.
-    """
-    return ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(n))
-
-
-def publish(topic):
-    cur = g.db.execute(
-        """
-        SELECT callback, secret
-        FROM subscribers
-        WHERE topic = '{0}'
-        """.format(topic)
-    )
-
-    results = cur.fetchall()
-
-    body = requests.get(topic, headers={'Accept':'application/atom+xml'}).content
-
-    for callback, secret in results:
-        # print subscriber, secret
-        if secret:
-            paybytes = urllib.parse.urlencode(payload).encode('utf8')
-            sign = hmac.new(secret, paybytes, hashlib.sha512).hexdigest()
-            headers = {
-                "X-Hub-Signature": 'method=sha512',
-                'signature': sign,
-                'content-type': 'application/atom+xml'
-                'charset=utf-8'
-            }
-            try:
-                requests.post(callback, data={
-                    'hub.secret': secret,
-                    'body': body
-                })
-            except ConnectionError:
-                pass
-        else:
-            headers = {
-                'content-type': 'application/atom+xml'
-                'charset=utf-8'}
-            try:
-                requests.post(callback, data={'body': body}, headers=headers)
-            except ConnectionError:
-                pass
-
-
-def subscribe(hub_topic, hub_callback, hub_lease_seconds=None, hub_secret=None):
-    #   if the topic is not yet in the dbms
-    insert = ["\""+hub_topic+"\"", "\""+hub_callback+"\""]
-    labels = "topic, callback"
-
-    if hub_lease_seconds:                       # if there exists a lease, add it to the list of things committed
-        insert.append(str(hub_lease_seconds))
-        labels += ", lease"
-
-    if hub_secret:                              # if there exists a secret, add it to the list of things committed
-        insert.append("\""+hub_secret+"\"")
-        labels += ', secret'
-
-    g.db.execute(
-        """
-        INSERT INTO subscribers
-        ({0}) VALUES ({1});
-        """.format(labels, ",".join(insert))
-    )
-    g.db.commit()
-
-
-def unsubscribe(hub_topic, hub_callback):
-    g.db.execute(
-        """
-        DELETE FROM subscribers
-        WHERE "topic = '{0}' AND callback = '{1}'";
-        """.format(hub_topic, hub_callback)
-    )
-    g.db.commit()
-
-
-def verify(hub_callback, hub_mode, hub_topic, hub_lease_seconds=None, hub_secret=None, headers=None):
-    """Verifies a request and performs an action if the verification is successful (subscribe/unsubscribe)"""
-    app.logger.debug("here")
-    app.logger.debug("\n\nVERIFYING: \ncallback{0}\nmode{1}\ntopic{2}".format(hub_callback, hub_mode, hub_topic))
-    challenge = challenge_me(30)      # generates a challenge string
-    # the request we are sending to the callback tao verify the request
-    payload = {
-        'hub.mode': hub_mode,
-        'hub.topic': hub_topic,
-        'hub.challenge': challenge,
-    }
-    if hub_lease_seconds:
-        payload['hub.lease_seconds'] = hub_lease_seconds
-
-    resp_headers = {}
-    try:
-        result = requests.get(hub_callback, params=payload, headers=resp_headers)
-        app.logger.debug("verification results {0}".format(result))
-    except ConnectionError:
-        app.logger.error("Connection Error: Verification Request Incomplete: {0}".format(result.text) )
-
-    if result.json()['hub.challenge'] == challenge and int(result.status_code / 100) == 2:
-        if hub_lease_seconds:
-            subscribe(hub_topic, hub_callback, hub_lease_seconds, hub_secret)
-        else:
-            unsubscribe(hub_topic, hub_callback)
-
-
 def init_db():
     with closing(connect_db()) as db:
         with app.open_resource('dbms/hub.sql', mode='r') as f:
@@ -169,6 +50,169 @@ def teardown_request(exception):
     db = getattr(g, 'db', None)
     if db is not None:
         db.close()
+
+
+def get_db():
+    if 'db' not in g:
+        g.db = connect_db()
+    return g
+
+@app.teardown_appcontext
+def teardown_db(self):
+    db = g.pop('db', None)
+
+    if db is not None:
+        db.close()
+
+
+def denial():
+    response = make_response(topic, reason)
+    response.args['hub.mode'] = 'denied'
+    response.headers['hub.topic'] = topic
+    response.status_code
+    return
+
+
+def challenge_me(n):
+    """Generates a random challenge string for verification of length n
+    Args:
+        n: integer length of the challenge string
+    Returns:
+        challenge string of length n.
+    """
+    return ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(n))
+
+
+def publish(topic):
+    g = get_db()
+    app.logger.debug( """
+        SELECT callback, secret
+        FROM 'subscribers'
+        WHERE topic = '{0}';
+        """.format(topic))
+    cur = g.db.execute(
+        """
+        SELECT callback, secret
+        FROM 'subscribers'
+        WHERE topic = '{0}';
+        """.format(topic)
+    )
+    results = cur.fetchall()
+    app.logger.info("Subscribers: ".format(results))
+
+    response = requests.get(topic)
+
+
+    for callback, secret in results:
+        # print subscriber, secret
+        if secret:
+            paybytes = urllib.parse.urlencode(payload).encode('utf8')
+            sign = hmac.new(secret, paybytes, hashlib.sha512).hexdigest()
+            headers = {
+                "X-Hub-Signature": 'method=sha512',
+                'signature': sign,
+                'content-type': response.headers['content-type'],
+                'link': '<http://hub.kongaloosh.com/>; rel="hub", <{0}>; rel="self"'.format(topic),
+
+            }
+            try:
+                requests.post(callback, data={
+                    'hub.secret': secret,
+                    'body': body
+                })
+            except ConnectionError:
+                pass
+        else:
+            app.logger.info(response.headers['content-type'])
+            headers = {
+                'content-type': response.headers['content-type'],
+                'link':'<http://hub.kongaloosh.com/>; rel="hub", <{0}>; rel="self"'.format(topic),
+               }
+            try:
+                app.logger.info('posting to: {0}'.format(callback))
+                r = requests.post(callback, data=response.content, headers=headers)
+                app.logger.debug(r)
+            except ConnectionError:
+                pass
+
+    return make_response(("notifying subscribers", 200))
+
+
+def subscribe(hub_topic, hub_callback, g, hub_lease_seconds=None, hub_secret=None):
+    #   if the topic is not yet in the dbms
+    g=get_db()
+    insert = ["\""+hub_topic+"\"", "\""+hub_callback+"\""]
+    labels = "topic, callback"
+
+    if hub_lease_seconds:                       # if there exists a lease, add it to the list of things committed
+        insert.append(str(hub_lease_seconds))
+        labels += ", lease"
+
+    if hub_secret:                              # if there exists a secret, add it to the list of things committed
+        insert.append("\""+hub_secret+"\"")
+        labels += ', secret'
+
+    app.logger.debug("""
+        INSERT INTO subscribers
+        ({0}) VALUES ({1});
+        """.format(labels, ",".join(insert)))
+
+    g.db.execute(
+        """
+        INSERT INTO subscribers
+        ({0}) VALUES ({1});
+        """.format(labels, ",".join(insert))
+    )
+    g.db.commit()
+
+
+def unsubscribe(hub_topic, hub_callback, g):
+    g.db.execute(
+        """
+        DELETE FROM subscribers
+        WHERE "topic = '{0}' AND callback = '{1}'";
+        """.format(hub_topic, hub_callback)
+    )
+    g.db.commit()
+
+
+def verify(hub_callback, hub_mode, hub_topic, g, hub_lease_seconds=None, hub_secret=None, headers=None):
+    """Verifies a request and performs an action if the verification is successful (subscribe/unsubscribe)"""
+    app.logger.debug("here")
+    app.logger.debug("\n\nVERIFYING: \ncallback{0}\nmode{1}\ntopic{2}".format(hub_callback, hub_mode, hub_topic))
+    challenge = challenge_me(30)      # generates a challenge string
+    # the request we are sending to the callback tao verify the request
+    payload = {
+        'hub.mode': hub_mode,
+        'hub.topic': hub_topic,
+        'hub.challenge': challenge,
+    }
+    if hub_lease_seconds:
+        payload['hub.lease_seconds'] = hub_lease_seconds
+
+    resp_headers = {}
+    try:
+        result = requests.get(hub_callback, params=payload, headers=resp_headers)
+        app.logger.debug("verification results \ncallback{0}\nmode{1}\ntopic{2}\lease{3}".format(hub_callback, hub_mode, hub_topic,hub_lease_seconds))
+    except ConnectionError:
+        app.logger.error("Connection Error: Verification Request Incomplete: {0}".format(result.text))
+
+    try:
+        challenge_check = result.json()['hub.challenge']
+    except ValueError:
+        challenge_check = result.content.decode("utf-8")
+
+    if challenge_check == challenge and int(result.status_code / 100) == 2:
+        if hub_mode == "subscribe":
+
+            app.logger.info("subscribing \ncallback: {0}\nmode: {1}\ntopic: {2}\lease: {3}".format(hub_callback, hub_mode, hub_topic,hub_lease_seconds))
+            with app.app_context():
+                subscribe(hub_topic=hub_topic, hub_callback=hub_callback, hub_lease_seconds=hub_lease_seconds, hub_secret=hub_secret, g=g)
+        else:
+            with app.app_context():
+                unsubscribe(hub_topic, hub_callback, g)
+
+
 
 
 @app.route('/', methods=['GET', 'POST'])
@@ -208,15 +252,15 @@ def show_entries():
             try:
                 hub_topic = request.args['hub.topic']
             except BadRequestKeyError:
-                pass
+                hub_topic = None
 
         try:
             hub_url = request.form['hub.url']
         except KeyError:
             try:
                 hub_url = request.args['hub.url']
-            except BadRequestKeyError:
-                pass
+            except KeyError:
+                hub_url = None
 
         try:
             hub_secret = request.form['hub.secret']
@@ -244,29 +288,33 @@ def show_entries():
                     'hub_lease':str(hub_lease_seconds),
                     'hub_secret':hub_secret
                 }))
-            t = threading.Thread(
-                target=verify,
-                kwargs={
-                    'hub_callback':str(hub_callback),
-                    'hub_mode':str(hub_mode),
-                    'hub_topic':str(hub_topic),
-                    'hub_lease_seconds':hub_lease_seconds,
-                    'hub_secret':hub_secret
-                }
-            )
-            t.start()
+            with app.app_context():
+                t = threading.Thread(
+                    target=verify,
+                    kwargs={
+                        'hub_callback':str(hub_callback),
+                        'hub_mode':str(hub_mode),
+                        'hub_topic':str(hub_topic),
+                        'hub_lease_seconds':hub_lease_seconds,
+                        'hub_secret':hub_secret,
+                        'g': g
+                    }
+                )
+                t.start()
             return make_response(("Subscription is being queued for verification.", 202))
 
         elif hub_mode == 'unsubscribe':  # if this is an unsubscription, verify
-            t = threading.Thread(
-                target=verify,
-                kwargs={'hub_callback':str(hub_callback),
-                        'hub_mod':str(hub_mode),
-                        'hub_topic':str(hub_topic),
-                          'headers':str(request.headers),
-                        'hub_secret':hub_secret}
-            )
-            t.start()
+            with app.app_context():
+                t = threading.Thread(
+                    target=verify,
+                    kwargs={'hub_callback':str(hub_callback),
+                            'hub_mod':str(hub_mode),
+                            'hub_topic':str(hub_topic),
+                              'headers':str(request.headers),
+                            'hub_secret':hub_secret,
+                            'g':g}
+                )
+                t.start()
             return make_response(("Unsubscription is being queued for verification.", 202))
         elif hub_mode == 'list':
             abort(404)
@@ -275,8 +323,14 @@ def show_entries():
         elif hub_mode == 'replay':
             abort(404)
         elif hub_mode == 'publish':
-            return publish(hub_url)
-
+            app.logger.info(
+                (hub_url, hub_topic)
+            )
+            if hub_url:
+                return publish(hub_url)
+            elif hub_topic:
+                return publish(hub_topic)
+            return abort(404)
 
 @app.route('/login')
 def login():
