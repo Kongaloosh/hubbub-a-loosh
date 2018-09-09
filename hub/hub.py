@@ -1,10 +1,13 @@
 from contextlib import closing
 from flask import Flask, request, session, g, redirect, url_for, abort, render_template, flash, Response, \
     make_response, jsonify
+import hashlib
+import hmac
 from jinja2 import Environment
 import os
 import random
 import requests
+from requests import ConnectionError
 import string
 import sqlite3
 from werkzeug.exceptions import BadRequestKeyError
@@ -48,24 +51,68 @@ def subscribe(hub_topic, hub_callback, hub_lease_seconds=None, hub_secret=None):
         insert.append("\""+hub_secret+"\"")
         labels += ', secret'
 
-    cur = g.db.execute(
+    g.db.execute(
         """
         INSERT INTO subscribers
         ({0}) VALUES ({1});
         """.format(labels, ",".join(insert))
     )
+    g.db.commit()
 
-    return make_response(("Subscription successful", 200))
+    return make_response(("Subscription successful", 202))
+
+
+def publish(topic):
+    cur = g.db.execute(
+        """
+        SELECT callback, secret
+        FROM subscribers
+        WHERE topic = '{0}'
+        """.format(topic)
+    )
+
+    results = cur.fetchall()
+
+    body = requests.get(topic, headers={'Accept':'application/atom+xml'}).content
+
+    for callback, secret in results:
+        # print subscriber, secret
+        if secret:
+            paybytes = urllib.parse.urlencode(payload).encode('utf8')
+            sign = hmac.new(secret, paybytes, hashlib.sha512).hexdigest()
+            headers = {
+                "X-Hub-Signature": 'method=sha512',
+                'signature': sign,
+                'content-type': 'application/atom+xml'
+                'charset=utf-8'
+            }
+            try:
+                requests.post(callback, data={
+                    'hub.secret': secret,
+                    'body': body
+                })
+            except ConnectionError:
+                pass
+        else:
+            headers = {
+                'content-type': 'application/atom+xml'
+                'charset=utf-8'}
+            try:
+                requests.post(callback, data={'body': body}, headers=headers)
+            except ConnectionError:
+                pass
+    return make_response(("Publishing being updated", 202))
 
 
 def unsubscribe(hub_topic, hub_callback):
-    cur = g.db.execute(
+    g.db.execute(
         """
         DELETE FROM subscribers
         WHERE "topic = '{0}' AND callback = '{1}'";
         """.format(hub_topic, hub_callback)
     )
-    return make_response(("Unubscription successful", 200))
+    g.db.commit()
+    return make_response(("Unubscription successful", 202))
 
 
 def verify(hub_callback, hub_mode, hub_topic, hub_lease_seconds=None, hub_secret=None, headers=None):
@@ -81,7 +128,10 @@ def verify(hub_callback, hub_mode, hub_topic, hub_lease_seconds=None, hub_secret
         payload['hub.lease_seconds'] = hub_lease_seconds
 
     resp_headers = {}
-    result = requests.get(hub_callback, params=payload, headers=resp_headers)
+    try:
+        result = requests.get(hub_callback, params=payload, headers=resp_headers)
+    except ConnectionError:
+        pass
 
     if result.json()['hub.challenge'] == challenge and int(result.status_code / 100) == 2:
         if hub_lease_seconds:
@@ -126,6 +176,7 @@ def show_entries():
         app.logger.info(dir(request))
         app.logger.info((request.form, request.args))
 
+
         """ request must include"""
         try:
             hub_callback = request.form['hub.callback']
@@ -133,22 +184,30 @@ def show_entries():
             try:
                 hub_callback = request.args['hub.callback']
             except BadRequestKeyError:
-                abort(500)
+                pass
         try:
             hub_mode = request.form['hub.mode']
         except BadRequestKeyError:
             try:
                 hub_mode = request.args['hub.mode']
             except BadRequestKeyError:
-                abort(500)
+                pass
 
         try:
             hub_topic = request.form['hub.topic']
         except KeyError:
             try:
                 hub_topic = request.args['hub.topic']
-            except:
-                abort
+            except BadRequestKeyError:
+                pass
+
+        try:
+            hub_url = request.form['hub.url']
+        except KeyError:
+            try:
+                hub_url = request.args['hub.url']
+            except BadRequestKeyError:
+                pass
 
         try:
             hub_secret = request.form['hub.secret']
@@ -164,9 +223,10 @@ def show_entries():
                 hub_lease_seconds = 10 * 60 * 60 * 24
             else:  # otherwise no lease is required for the request
                 hub_lease_seconds = None
-
-        app.logger.info((hub_secret,hub_lease_seconds,hub_topic,hub_callback,hub_mode))
-
+        try:
+            app.logger.info((hub_secret, hub_lease_seconds, hub_topic, hub_callback, hub_mode))
+        except:
+            pass
         if hub_mode == 'subscribe':  # if this is a subscription, verify
             return verify(hub_callback=str(hub_callback), hub_mode=str(hub_mode), hub_topic=str(hub_topic),
                    hub_lease_seconds=str(hub_lease_seconds), hub_secret=hub_secret)
@@ -174,11 +234,15 @@ def show_entries():
             return verify(hub_callback=str(hub_callback), hub_mode=str(hub_mode), hub_topic=str(hub_topic),
                           headers=str(request.headers), hub_secret=hub_secret)
         elif hub_mode == 'list':
-            pass
+            abort(404)
         elif hub_mode == 'retrieve':
-            pass
+            abort(404)
         elif hub_mode == 'replay':
-            pass
+            abort(404)
+        elif hub_mode == 'publish':
+            return publish(hub_url)
+
+
 
 
 @app.route('/login')

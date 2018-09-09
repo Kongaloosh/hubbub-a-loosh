@@ -3,6 +3,7 @@ from flask import Flask, request, session, g, redirect, url_for, abort, render_t
 from jinja2 import Environment
 import os
 import requests
+from requests import ConnectionError
 from werkzeug.exceptions import BadRequestKeyError
 
 jinja_env = Environment(extensions=['jinja2.ext.with_'])
@@ -15,7 +16,7 @@ cfg = None
 @app.route('/', methods=['GET', 'POST'])
 def show_entries():
     if request.method == 'POST':
-        pass
+        print request.content
 
     if request.method == 'GET':
         payload = {}
