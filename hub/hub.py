@@ -14,6 +14,7 @@ import string
 import sqlite3
 import threading
 import time
+import urllib
 from werkzeug.exceptions import BadRequestKeyError
 
 jinja_env = Environment(extensions=['jinja2.ext.with_'])
@@ -102,24 +103,25 @@ def publish(topic):
 
     response = requests.get(topic)
 
-
     for callback, secret in results:
         # print subscriber, secret
         if secret:
-            paybytes = urllib.parse.urlencode(payload).encode('utf8')
-            sign = hmac.new(secret, paybytes, hashlib.sha512).hexdigest()
+            paybytes = response.content
+            app.logger.info(type(str.encode(secret)))
+            sign = hmac.new(str.encode(secret), paybytes, hashlib.sha512).hexdigest()
+            app.logger.info(sign)
             headers = {
-                "X-Hub-Signature": 'method=sha512',
-                'signature': sign,
+                "X-Hub-Signature": 'sha512={0}'.format(sign),
                 'content-type': response.headers['content-type'],
-                'link': '<http://hub.kongaloosh.com/>; rel="hub", <{0}>; rel="self"'.format(topic),
+                'link':'<http://hub.kongaloosh.com/>; rel="hub", <{0}>; rel="self"'.format(topic)
 
             }
             try:
-                requests.post(callback, data={
-                    'hub.secret': secret,
-                    'body': body
-                })
+                # requests.post(callback, data={
+                #     'hub.secret': secret,
+                #     'body': body
+                # })
+                requests.post(callback,headers=headers,data=response.content)
             except ConnectionError:
                 pass
         else:
