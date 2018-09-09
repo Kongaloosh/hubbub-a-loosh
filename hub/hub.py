@@ -1,3 +1,4 @@
+from contextlib import closing
 from flask import Flask, request, session, g, redirect, url_for, abort, render_template, flash, Response, \
     make_response, jsonify
 from jinja2 import Environment
@@ -5,6 +6,7 @@ import os
 import random
 import requests
 import string
+import sqlite3
 from werkzeug.exceptions import BadRequestKeyError
 
 jinja_env = Environment(extensions=['jinja2.ext.with_'])
@@ -33,16 +35,27 @@ def challenge_me(n):
     return ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(n))
 
 
-def subscribe():
-
+def subscribe(hub_topic, hub_callback, hub_lease_seconds, hub_secret):
+    # WHERE
+    # callback = {0};
     #   if the topic is not yet in the dbms
+    print hub_callback
+
+    cur = g.db.execute(
+        """
+        SELECT *
+        FROM subscribers
+        WHERE callback = '{0}'
+        """.format(hub_callback)
+    )
+    print len(cur.fetchall())
 
     #     add the subscriber to the dbms
 
     return make_response(("Subscription successful", 200))
 
 
-def unsubscribe():
+def unsubscribe(hub_topic, hub_callback):
     return make_response(("Unubscription successful", 200))
 
 
@@ -72,15 +85,13 @@ def verify(hub_callback, hub_mode, hub_topic, hub_lease_seconds=None, hub_secret
 
 def init_db():
     with closing(connect_db()) as db:
-        with app.open_resource('hub.sql', mode='r') as f:
+        with app.open_resource('dbms/hub.sql', mode='r') as f:
             db.cursor().executescript(f.read())
         db.commit()
 
 
 def connect_db():
-    if not os.path.isfile('hub.db'):
-        init_db()
-    return sqlite3.connect('hub.db')
+    return sqlite3.connect('hub/dbms/hub.db')
 
 
 @app.before_request
@@ -137,7 +148,7 @@ def show_entries():
             try:
                 hub_secret = request.args['hub.secret']
             except BadRequestKeyError:
-                abort
+                hub_secret = None
         try:
             hub_lease_seconds = request.args['hub.lease_seconds']
         except KeyError:
@@ -147,11 +158,11 @@ def show_entries():
                 hub_lease_seconds = None
 
         if hub_mode == 'subscribe':  # if this is a subscription, verify
-            return verify(hub_callback=hub_callback, hub_mode=hub_mode, hub_topic=hub_topic,
-                   hub_lease_seconds=hub_lease_seconds, hub_secret=hub_secret)
+            return verify(hub_callback=str(hub_callback), hub_mode=str(hub_mode), hub_topic=str(hub_topic),
+                   hub_lease_seconds=str(hub_lease_seconds), hub_secret=str(hub_secret))
         elif hub_mode == 'unsubscribe':  # if this is an unsubscription, verify
-            return verify(hub_callback=hub_callback, hub_mode=hub_mode, hub_topic=hub_topic,
-                          headers=request.headers, hub_secret=hub_secret)
+            return verify(hub_callback=str(hub_callback), hub_mode=str(hub_mode), hub_topic=str(hub_topic),
+                          headers=str(request.headers), hub_secret=str(hub_secret))
         elif hub_mode == 'list':
             pass
         elif hub_mode == 'retrieve':
@@ -182,4 +193,7 @@ def dashboard():
 
 
 if __name__ == "__main__":
+    if not os.path.isfile('dbms/hub.db'):
+        print("Creating DBMS!")
+        init_db()
     app.run(debug=True)

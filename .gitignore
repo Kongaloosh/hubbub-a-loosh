@@ -1,5 +1,8 @@
 *.pyc
 
+# DBMS
+*.db
+
 # pipenv files
 PipFile
 PipFile.lock
