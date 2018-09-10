@@ -58,6 +58,7 @@ def get_db():
         g.db = connect_db()
     return g
 
+
 @app.teardown_appcontext
 def teardown_db(self):
     db = g.pop('db', None)
@@ -86,11 +87,6 @@ def challenge_me(n):
 
 def publish(topic):
     g = get_db()
-    app.logger.debug( """
-        SELECT callback, secret
-        FROM 'subscribers'
-        WHERE topic = '{0}';
-        """.format(topic))
     cur = g.db.execute(
         """
         SELECT callback, secret
@@ -99,7 +95,6 @@ def publish(topic):
         """.format(topic)
     )
     results = cur.fetchall()
-    app.logger.info("Subscribers: ".format(results))
 
     response = requests.get(topic)
 
@@ -113,52 +108,40 @@ def publish(topic):
             headers = {
                 "X-Hub-Signature": 'sha512={0}'.format(sign),
                 'content-type': response.headers['content-type'],
-                'link':'<http://hub.kongaloosh.com/>; rel="hub", <{0}>; rel="self"'.format(topic)
+                'link': '<http://hub.kongaloosh.com/>; rel="hub", <{0}>; rel="self"'.format(topic)
 
             }
             try:
-                # requests.post(callback, data={
-                #     'hub.secret': secret,
-                #     'body': body
-                # })
-                requests.post(callback,headers=headers,data=response.content)
+                requests.post(callback, headers=headers, data=response.content)
             except ConnectionError:
                 pass
         else:
             app.logger.info(response.headers['content-type'])
             headers = {
                 'content-type': response.headers['content-type'],
-                'link':'<http://hub.kongaloosh.com/>; rel="hub", <{0}>; rel="self"'.format(topic),
-               }
+                'link': '<http://hub.kongaloosh.com/>; rel="hub", <{0}>; rel="self"'.format(topic),
+            }
             try:
                 app.logger.info('posting to: {0}'.format(callback))
                 r = requests.post(callback, data=response.content, headers=headers)
-                app.logger.debug(r)
             except ConnectionError:
                 pass
-
     return make_response(("notifying subscribers", 200))
 
 
 def subscribe(hub_topic, hub_callback, g, hub_lease_seconds=None, hub_secret=None):
     #   if the topic is not yet in the dbms
-    g=get_db()
-    insert = ["\""+hub_topic+"\"", "\""+hub_callback+"\""]
+    g = get_db()
+    insert = ["\"" + hub_topic + "\"", "\"" + hub_callback + "\""]
     labels = "topic, callback"
 
-    if hub_lease_seconds:                       # if there exists a lease, add it to the list of things committed
+    if hub_lease_seconds:  # if there exists a lease, add it to the list of things committed
         insert.append(str(hub_lease_seconds))
         labels += ", lease"
 
-    if hub_secret:                              # if there exists a secret, add it to the list of things committed
-        insert.append("\""+hub_secret+"\"")
+    if hub_secret:  # if there exists a secret, add it to the list of things committed
+        insert.append("\"" + hub_secret + "\"")
         labels += ', secret'
-
-    app.logger.debug("""
-        INSERT INTO subscribers
-        ({0}) VALUES ({1});
-        """.format(labels, ",".join(insert)))
-
     g.db.execute(
         """
         INSERT INTO subscribers
@@ -180,9 +163,7 @@ def unsubscribe(hub_topic, hub_callback, g):
 
 def verify(hub_callback, hub_mode, hub_topic, g, hub_lease_seconds=None, hub_secret=None, headers=None):
     """Verifies a request and performs an action if the verification is successful (subscribe/unsubscribe)"""
-    app.logger.debug("here")
-    app.logger.debug("\n\nVERIFYING: \ncallback{0}\nmode{1}\ntopic{2}".format(hub_callback, hub_mode, hub_topic))
-    challenge = challenge_me(30)      # generates a challenge string
+    challenge = challenge_me(30)  # generates a challenge string
     # the request we are sending to the callback tao verify the request
     payload = {
         'hub.mode': hub_mode,
@@ -195,7 +176,6 @@ def verify(hub_callback, hub_mode, hub_topic, g, hub_lease_seconds=None, hub_sec
     resp_headers = {}
     try:
         result = requests.get(hub_callback, params=payload, headers=resp_headers)
-        app.logger.debug("verification results \ncallback{0}\nmode{1}\ntopic{2}\lease{3}".format(hub_callback, hub_mode, hub_topic,hub_lease_seconds))
     except ConnectionError:
         app.logger.error("Connection Error: Verification Request Incomplete: {0}".format(result.text))
 
@@ -206,32 +186,18 @@ def verify(hub_callback, hub_mode, hub_topic, g, hub_lease_seconds=None, hub_sec
 
     if challenge_check == challenge and int(result.status_code / 100) == 2:
         if hub_mode == "subscribe":
-
-            app.logger.info("subscribing \ncallback: {0}\nmode: {1}\ntopic: {2}\lease: {3}".format(hub_callback, hub_mode, hub_topic,hub_lease_seconds))
             with app.app_context():
-                subscribe(hub_topic=hub_topic, hub_callback=hub_callback, hub_lease_seconds=hub_lease_seconds, hub_secret=hub_secret, g=g)
+                subscribe(hub_topic=hub_topic, hub_callback=hub_callback, hub_lease_seconds=hub_lease_seconds,
+                          hub_secret=hub_secret, g=g)
         else:
             with app.app_context():
                 unsubscribe(hub_topic, hub_callback, g)
 
 
-
-
 @app.route('/', methods=['GET', 'POST'])
 def show_entries():
     """Hub which handles routing between the publisher and subscribers"""
-    print("HELP; I'mSTUKC")
     if request.method == 'POST':  # if we are recieving a post
-        app.logger.debug("pls")
-        # try:
-        #     request.headers['application/x-www-form-urlencoded ']  # check to make sure the headers are correct
-        # except KeyError:
-        #     abort(401)  # todo: better for malforming.
-
-        # app.logger.info(dir(request))
-        app.logger.info((request.form, request.args))
-
-
         """ request must include"""
         try:
             hub_callback = request.form['hub.callback']
@@ -278,27 +244,23 @@ def show_entries():
                 hub_lease_seconds = 10 * 60 * 60 * 24
             else:  # otherwise no lease is required for the request
                 hub_lease_seconds = None
-        try:
-            app.logger.info((hub_secret, hub_lease_seconds, hub_topic, hub_callback, hub_mode))
-        except:
-            pass
         if hub_mode == 'subscribe':  # if this is a subscription, verify
-            app.logger.debug("verifying with thread {0} \n {1}".format(verify,{
-                    'hub_callback':str(hub_callback),
-                    'hub_mode':str(hub_mode),
-                    'hub_topic':str(hub_topic),
-                    'hub_lease':str(hub_lease_seconds),
-                    'hub_secret':hub_secret
-                }))
+            app.logger.debug("verifying with thread {0} \n {1}".format(verify, {
+                'hub_callback': str(hub_callback),
+                'hub_mode': str(hub_mode),
+                'hub_topic': str(hub_topic),
+                'hub_lease': str(hub_lease_seconds),
+                'hub_secret': hub_secret
+            }))
             with app.app_context():
                 t = threading.Thread(
                     target=verify,
                     kwargs={
-                        'hub_callback':str(hub_callback),
-                        'hub_mode':str(hub_mode),
-                        'hub_topic':str(hub_topic),
-                        'hub_lease_seconds':hub_lease_seconds,
-                        'hub_secret':hub_secret,
+                        'hub_callback': str(hub_callback),
+                        'hub_mode': str(hub_mode),
+                        'hub_topic': str(hub_topic),
+                        'hub_lease_seconds': hub_lease_seconds,
+                        'hub_secret': hub_secret,
                         'g': g
                     }
                 )
@@ -309,12 +271,12 @@ def show_entries():
             with app.app_context():
                 t = threading.Thread(
                     target=verify,
-                    kwargs={'hub_callback':str(hub_callback),
-                            'hub_mode':str(hub_mode),
-                            'hub_topic':str(hub_topic),
-                              'headers':str(request.headers),
-                            'hub_secret':hub_secret,
-                            'g':g}
+                    kwargs={'hub_callback': str(hub_callback),
+                            'hub_mode': str(hub_mode),
+                            'hub_topic': str(hub_topic),
+                            'headers': str(request.headers),
+                            'hub_secret': hub_secret,
+                            'g': g}
                 )
                 t.start()
             return make_response(("Unsubscription is being queued for verification.", 202))
@@ -333,6 +295,7 @@ def show_entries():
             elif hub_topic:
                 return publish(hub_topic)
             return abort(404)
+
 
 @app.route('/login')
 def login():
@@ -359,20 +322,5 @@ if __name__ == "__main__":
     if not os.path.isfile('hub/dbms/hub.db'):
         print("Creating DBMS!")
         init_db()
-    #
-    # file_handler = FileHandler('output.log')
-    # handler = logging.StreamHandler()
-    # file_handler.setLevel(logging.DEBUG)
-    # handler.setLevel(logging.DEBUG)
-    # file_handler.setFormatter(Formatter(
-    #     '%(asctime)s %(levelname)s: %(message)s '
-    #     '[in %(pathname)s:%(lineno)d]'
-    # ))
-    # handler.setFormatter(Formatter(
-    #     '%(asctime)s %(levelname)s: %(message)s '
-    #     '[in %(pathname)s:%(lineno)d]'
-    # ))
-    # app.logger.addHandler(handler)
-    # app.logger.addHandler(file_handler)
 
     app.run(debug=True)
