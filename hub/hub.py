@@ -310,7 +310,7 @@ def show_entries():
                 t = threading.Thread(
                     target=verify,
                     kwargs={'hub_callback':str(hub_callback),
-                            'hub_mod':str(hub_mode),
+                            'hub_mode':str(hub_mode),
                             'hub_topic':str(hub_topic),
                               'headers':str(request.headers),
                             'hub_secret':hub_secret,
